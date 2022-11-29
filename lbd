@@ -1,0 +1,102 @@
+#!/usr/bin/python3
+import httpx, requests
+from subprocess import Popen
+from urllib.parse import quote
+from re import search as regexSearch
+from bs4 import BeautifulSoup
+from sys import argv as args
+
+QUALITY = "1080p"
+APPLICATION = "qbittorrent"
+
+if len(args) >= 2:
+    baseLink = args[1]
+else:
+    baseLink = input("Enter the link.\n")
+
+def main():
+    howMany = input("How many outputs do you want? (\033[94mENTER for max\033[0m) ")
+    while True:
+        if howMany == "":
+            # If the input is the enter key, it'll do the entire list.
+            howMany = -1
+            break
+        else:
+            try:
+                howMany = int(howMany)
+                break
+            except ValueError:
+                print("Must be a whole number.")
+
+    html = requests.get(baseLink).content.decode()
+
+    # make it searchable using the BeatifulSoup lib.
+    soup = BeautifulSoup(html, 'html.parser')
+    soup = BeautifulSoup(str(soup.select(".film-list")), "html.parser")
+
+    movieList = list()
+
+    for i in soup.find_all("li")[0:howMany]:
+        x = BeautifulSoup(str(i), "html.parser")
+        link = regexSearch("data-target-link=\"(.*)/\" ", x.decode()).group(1) + "/"
+        link = f"https://letterboxd.com{link}"
+
+        # Getting info from the site
+        site = BeautifulSoup(
+                requests.get(link).content.decode(),
+                "html.parser"
+            )
+
+        # Creating a URL.
+        year = regexSearch(
+                "href=\"/films/year/(.*)/\"", str(
+                site.select("#featured-film-header .number")
+            )).group(1)
+
+        name = str(site.select("#featured-film-header h1"))
+        name = regexSearch(
+                "<h1 class=\"headline-1 js-widont prettify\">(.*)</h1>", 
+                str(site.select("#featured-film-header h1"))
+            ).group(1)
+        
+        # Adds the movie name, release year, and desired quality to the movie list.
+        movieList.append(f"{name} {year} {QUALITY}")
+        print(f"\033[92m{name} \033[94m{year}\033[0m")
+
+    # Loops over all the movies in movieList
+    for movie in movieList:
+        # Gets the data in dict format.
+        # `quote` is used to make the request a valid http URL.
+        data = requests.get(f"https://librex.beparanoid.de/api.php?q={quote(movie)}&t=3&p=0").json()
+
+        # Loops over all the items in the data set.
+        for i in range(len(data)):
+            # If its got more than one seeder, it'll download it.
+            if int(data[i]["seeders"]) > 1:
+                magnet = data[i]["magnet"]
+                site = data[i]["source"]
+            else:
+                break
+        
+        if input("Do you want to download \033[94m{}\033[0m? (y/N) ".format(movie)).lower() == "y":
+
+            if "magnet" in locals():
+                print( f"Opening \033[91m{movie}\033[0m with \033[93m{APPLICATION}\033[0m" )
+
+                # If it's a 1337x link, it'll get the magnet link from a request header
+                if "1337x" in site:
+                    magnet = httpx.get("https://librex.beparanoid.de/{}".format(magnet)).headers["Location"]
+                
+                # Open the desired bittorrent client with the magnet link as an arg.
+                Popen([APPLICATION, magnet])
+            else:
+                print("Failed to get {}, \nMaybe try a different quality or manually search it.".format(movie))
+
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt as k:
+        print("\nKeyboard Interupt\nExiting :(")
+        exit(0)
